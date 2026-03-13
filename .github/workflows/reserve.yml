@@ -6,6 +6,11 @@ on:
   repository_dispatch:
     types: [reserve]
   workflow_dispatch:        # 允许手动开/关
+    inputs:
+      test_feishu_only:
+        description: "仅测试飞书通知（true=只发测试消息，不跑抢座）"
+        required: false
+        default: "false"
 
 jobs:
   prepare-dispatch:
@@ -95,6 +100,43 @@ jobs:
           path: key_logs_*.txt
           if-no-files-found: ignore
 
+      - name: Send key logs to Feishu (dispatch)
+        if: ${{ always() }}
+        env:
+          USER_NAME: ${{ matrix.user.nickname || matrix.user.nickName || matrix.user.name || matrix.user.remark || matrix.user.username || 'user' }}
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
+        run: |
+          webhook="${FEISHU_WEBHOOK:-$FEISHU_BOT_WEBHOOK}"
+          if [[ -z "$webhook" ]]; then
+            echo "Feishu webhook not configured, skip."
+            exit 0
+          fi
+
+          log_file="key_logs_${USER_NAME}.txt"
+          if [[ ! -f "$log_file" ]]; then
+            msg_body="reserve key log file not found: $log_file"
+          else
+            msg_body="$(tail -n 80 "$log_file")"
+          fi
+
+          text_msg=$(
+            cat <<EOF
+【抢座关键日志】
+用户: ${USER_NAME}
+仓库: ${GITHUB_REPOSITORY}
+运行ID: ${GITHUB_RUN_ID}
+运行链接: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+${msg_body}
+EOF
+          )
+
+          payload="$(printf '%s' "$text_msg" | jq -Rs '{msg_type:"text",content:{text:.}}')"
+          status_code="$(curl -sS -o /tmp/feishu_resp.txt -w '%{http_code}' -X POST "$webhook" -H 'Content-Type: application/json' -d "$payload" || true)"
+          echo "Feishu response code: ${status_code}"
+          cat /tmp/feishu_resp.txt || true
+
   reserve-manual:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
@@ -114,10 +156,40 @@ jobs:
           sudo apt-get install -y libgl1 libglib2.0-0
 
       - name: Install dependencies
+        if: ${{ github.event.inputs.test_feishu_only != 'true' }}
         run: |
           pip install -r requirements.txt
 
+      - name: Send test message to Feishu (manual)
+        if: ${{ always() }}
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
+        run: |
+          webhook="${FEISHU_WEBHOOK:-$FEISHU_BOT_WEBHOOK}"
+          if [[ -z "$webhook" ]]; then
+            echo "Feishu webhook not configured, skip."
+            exit 0
+          fi
+
+          text_msg=$(
+            cat <<EOF
+【抢座关键日志】
+飞书连通性测试成功候选
+仓库: ${GITHUB_REPOSITORY}
+运行ID: ${GITHUB_RUN_ID}
+运行链接: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+测试模式: test_feishu_only=${{ github.event.inputs.test_feishu_only || 'false' }}
+EOF
+          )
+
+          payload="$(printf '%s' "$text_msg" | jq -Rs '{msg_type:"text",content:{text:.}}')"
+          status_code="$(curl -sS -o /tmp/feishu_resp_test.txt -w '%{http_code}' -X POST "$webhook" -H 'Content-Type: application/json' -d "$payload" || true)"
+          echo "Feishu test response code: ${status_code}"
+          cat /tmp/feishu_resp_test.txt || true
+
       - name: Run reserve script (manual)
+        if: ${{ github.event.inputs.test_feishu_only != 'true' }}
         env:
           CX_USERNAME: ${{ secrets.CX_USERNAME }}
           CX_PASSWORD: ${{ secrets.CX_PASSWORD }}
@@ -128,7 +200,7 @@ jobs:
           python main.py --action 2>&1 | tee reserve.log
 
       - name: Extract key logs (manual)
-        if: ${{ always() }}
+        if: ${{ always() && github.event.inputs.test_feishu_only != 'true' }}
         env:
           USER_NAME: manual
         run: |
@@ -155,11 +227,48 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload key logs artifact (manual)
-        if: ${{ always() }}
+        if: ${{ always() && github.event.inputs.test_feishu_only != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: key-logs-manual
           path: key_logs_*.txt
           if-no-files-found: ignore
+
+      - name: Send key logs to Feishu (manual)
+        if: ${{ always() && github.event.inputs.test_feishu_only != 'true' }}
+        env:
+          USER_NAME: manual
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
+        run: |
+          webhook="${FEISHU_WEBHOOK:-$FEISHU_BOT_WEBHOOK}"
+          if [[ -z "$webhook" ]]; then
+            echo "Feishu webhook not configured, skip."
+            exit 0
+          fi
+
+          log_file="key_logs_${USER_NAME}.txt"
+          if [[ ! -f "$log_file" ]]; then
+            msg_body="reserve key log file not found: $log_file"
+          else
+            msg_body="$(tail -n 80 "$log_file")"
+          fi
+
+          text_msg=$(
+            cat <<EOF
+【抢座关键日志】
+用户: ${USER_NAME}
+仓库: ${GITHUB_REPOSITORY}
+运行ID: ${GITHUB_RUN_ID}
+运行链接: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+${msg_body}
+EOF
+          )
+
+          payload="$(printf '%s' "$text_msg" | jq -Rs '{msg_type:"text",content:{text:.}}')"
+          status_code="$(curl -sS -o /tmp/feishu_resp.txt -w '%{http_code}' -X POST "$webhook" -H 'Content-Type: application/json' -d "$payload" || true)"
+          echo "Feishu response code: ${status_code}"
+          cat /tmp/feishu_resp.txt || true
 
 
