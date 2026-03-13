@@ -847,8 +847,29 @@ async function api(method, path, body = null) {
     headers: { "Content-Type": "application/json", "X-API-Key": API_KEY },
   };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(API_BASE + path, opts);
-  return res.json();
+  let res;
+  try {
+    res = await fetch(API_BASE + path, opts);
+  } catch (e) {
+    return { ok: false, error: "网络请求失败", detail: e.message || String(e), status: 0 };
+  }
+
+  const raw = await res.text();
+  let data;
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch (_e) {
+    data = { ok: res.ok };
+    if (!res.ok) {
+      data.error = `HTTP ${res.status}`;
+      data.detail = raw;
+    }
+  }
+
+  if (!data || typeof data !== "object") data = { ok: res.ok };
+  if (data.status === undefined) data.status = res.status;
+  if (!res.ok && !data.error) data.error = `HTTP ${res.status}`;
+  return data;
 }
 
 function toast(msg, type = "success") {
@@ -1516,16 +1537,21 @@ async function resumeUser(userId) {
 }
 
 async function triggerUser(userId) {
-  const res = await api("POST", "/api/trigger/" + currentSchool.id + "/" + userId);
-  if (res.ok) {
-    toast("已触发");
-  } else {
+  try {
+    const res = await api("POST", "/api/trigger/" + currentSchool.id + "/" + userId);
+    if (res.ok) {
+      toast("已触发");
+      return;
+    }
+    const detailText = typeof res.detail === "string" ? res.detail.slice(0, 120) : "";
     const msg = [
       res.error || "触发失败",
       res.status ? ("status=" + res.status) : "",
-      res.detail ? res.detail.slice(0, 120) : "",
+      detailText,
     ].filter(Boolean).join(" | ");
     toast(msg, "error");
+  } catch (e) {
+    toast("触发异常: " + (e.message || String(e)), "error");
   }
 }
 
