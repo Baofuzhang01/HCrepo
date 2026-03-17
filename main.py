@@ -767,6 +767,12 @@ def strategic_first_attempt(
 
             # 如果第一次没有成功：为第二次提交重新获取页面 token，再延迟 TARGET_OFFSET2_MS 毫秒提交
             if not suc:
+                if s.should_skip_followup_submit():
+                    logging.info(
+                        "[strategic] First submit hit terminal failure msg, skip second/third submit"
+                    )
+                    success_list[index] = suc
+                    continue
                 logging.info("[strategic] First submit failed, prepare second submit with NEW page token")
 
                 token2, value2 = s._get_page_token(_token_url, require_value=True)
@@ -792,6 +798,12 @@ def strategic_first_attempt(
 
             # 如果第二次仍未成功：为第三次提交再次获取新的 token，再延迟 TARGET_OFFSET3_MS 毫秒提交
             if not suc:
+                if s.should_skip_followup_submit():
+                    logging.info(
+                        "[strategic] Second submit hit terminal failure msg, skip third submit"
+                    )
+                    success_list[index] = suc
+                    continue
                 logging.info("[strategic] Second submit failed, prepare third submit with NEW page token")
 
                 token3, value3 = s._get_page_token(_token_url, require_value=True)
