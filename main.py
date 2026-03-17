@@ -61,21 +61,34 @@ def _format_seat_number(seat_num: int) -> str:
     return f"{seat_num:03d}"
 
 
-def _pick_random_fallback_seat(base_seat_num: int) -> tuple[str, str]:
+def _pick_random_fallback_seat(
+    base_seat_num: int,
+    used_seats: set[str] | None = None,
+) -> tuple[str, str]:
     """生成补抢座位号。
 
     - 当前座位号 >= 50: 在 [1, 当前座位号] 随机
     - 当前座位号 < 50: 在 [0, 100] 随机
+    - 同一配置的补抢窗口内优先不重复抽已尝试过的座位
     返回三位数字符串和区间说明。
     """
     if base_seat_num < 50:
-        seat_num = random.randint(0, 100)
+        candidates = list(range(0, 101))
         source_range = "0-100"
     else:
-        seat_num = random.randint(1, base_seat_num)
+        candidates = list(range(1, base_seat_num + 1))
         source_range = f"1-{base_seat_num}"
-    return _format_seat_number(seat_num), source_range
 
+    if used_seats:
+        remaining = [
+            seat_num for seat_num in candidates
+            if _format_seat_number(seat_num) not in used_seats
+        ]
+        if remaining:
+            candidates = remaining
+
+    seat_num = random.choice(candidates)
+    return _format_seat_number(seat_num), source_range
 
 
 ENDTIME = "14:00:40"  # 根据学校的预约座位时间+40ms即可
@@ -959,6 +972,7 @@ def main(users, action=False):
             )
             original_seatids.append(None)
     seat_increment_attempts = 0
+    fallback_used_seats = [set() for _ in users]
 
     while True:
         # 使用逻辑时间 _now(action)，在 GitHub Actions 下就是北京时间
@@ -983,7 +997,10 @@ def main(users, action=False):
                 for i, user in enumerate(users):
                     if not success_list[i] and original_seatids[i] is not None \
                             and current_dayofweek in user.get("daysofweek", []):
-                        new_seat, source_range = _pick_random_fallback_seat(original_seatids[i])
+                        new_seat, source_range = _pick_random_fallback_seat(
+                            original_seatids[i], fallback_used_seats[i]
+                        )
+                        fallback_used_seats[i].add(new_seat)
                         user["seatid"] = [new_seat]
                         logging.info(
                             f"[seat-random-after-strategic] Config {i}: try seat {new_seat} "
@@ -1016,7 +1033,10 @@ def main(users, action=False):
                 for i, user in enumerate(users):
                     if not success_list[i] and original_seatids[i] is not None \
                             and current_dayofweek in user.get("daysofweek", []):
-                        new_seat, source_range = _pick_random_fallback_seat(original_seatids[i])
+                        new_seat, source_range = _pick_random_fallback_seat(
+                            original_seatids[i], fallback_used_seats[i]
+                        )
+                        fallback_used_seats[i].add(new_seat)
                         user["seatid"] = [new_seat]
                         logging.info(
                             f"[seat-random] Config {i}: try seat {new_seat} "
